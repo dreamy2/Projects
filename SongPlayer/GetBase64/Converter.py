@@ -18,20 +18,28 @@ def get_resized_dimensions(orig_width, orig_height, max_width=MAX_WIDTH, max_hei
 def image_to_base64(img: Image.Image, optimize=True, compress_level=9) -> (str, bytes):
     """
     Convert a Pillow Image to a Base64 encoded PNG.
-    The PNG is saved with interlace=0 (non-interlaced).
+    Saves the image with interlace=0 and then forcefully sets the interlace method byte to 0.
     Returns a tuple of the Base64 string and the raw PNG data.
     """
     buffer = io.BytesIO()
-    # Force non-interlaced output by setting interlace=0.
+    # Save image as PNG with non-interlaced output
     img.save(buffer, format="PNG", optimize=optimize, compress_level=compress_level, interlace=0)
     png_data = buffer.getvalue()
-    encoded = base64.b64encode(png_data).decode("utf-8")
-    return encoded, png_data
+    
+    # Convert to bytearray so we can patch the interlace method.
+    # According to the PNG spec, the interlace method is at byte index 28.
+    png_bytes = bytearray(png_data)
+    if len(png_bytes) >= 29:
+        png_bytes[28] = 0  # Force non-interlaced
+    patched_png_data = bytes(png_bytes)
+    
+    encoded = base64.b64encode(patched_png_data).decode("utf-8")
+    return encoded, patched_png_data
 
 def check_interlace(png_data: bytes) -> int:
     """
     Check the interlace method in the PNG header.
-    The interlace byte is the 29th byte (index 28 in 0-indexed).
+    The interlace byte is at index 28 (0-indexed).
     Returns the interlace method (0 = non-interlaced, 1 = interlaced).
     """
     if len(png_data) < 29:
@@ -53,7 +61,7 @@ def process_image(image_file):
 
             # Debug: Check interlace method from PNG header.
             interlace_method = check_interlace(png_data)
-            print(f"Initial interlace method for {image_file}: {interlace_method}")
+            print(f"Interlace method for {image_file}: {interlace_method}")
 
             # If the Base64 string exceeds 1 MB, iteratively reduce the size.
             scale_factor = 0.9  # Reduce dimensions by 10% per iteration if needed
@@ -94,7 +102,7 @@ def main():
             continue
         
         base_name = os.path.splitext(os.path.basename(image_file))[0]
-        output_filename = os.path.join(script_dir, f"{base_name}_{final_width}x{final_height}_Base64.txt")
+        output_filename = os.path.join(script_dir, f"{base_name}_{final_width}x{final_height}_Base64_V2.txt")
         with open(output_filename, "w") as f:
             f.write(b64_data)
         print(f"Exported Base64 data to {output_filename} (size: {len(b64_data)} bytes)")
