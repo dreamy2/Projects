@@ -15,22 +15,33 @@ def get_resized_dimensions(orig_width, orig_height, max_width=MAX_WIDTH, max_hei
     ratio = min(max_width / orig_width, max_height / orig_height, 1)
     return int(orig_width * ratio), int(orig_height * ratio)
 
-def image_to_base64(img: Image.Image, optimize=True, compress_level=9) -> str:
+def image_to_base64(img: Image.Image, optimize=True, compress_level=9) -> (str, bytes):
     """
     Convert a Pillow Image to a Base64 encoded PNG.
-    The PNG is saved with interlace=0 (non-interlaced) so it will work with the Roblox image loader.
+    The PNG is saved with interlace=0 (non-interlaced).
+    Returns a tuple of the Base64 string and the raw PNG data.
     """
     buffer = io.BytesIO()
     # Force non-interlaced output by setting interlace=0.
     img.save(buffer, format="PNG", optimize=optimize, compress_level=compress_level, interlace=0)
     png_data = buffer.getvalue()
     encoded = base64.b64encode(png_data).decode("utf-8")
-    return encoded
+    return encoded, png_data
+
+def check_interlace(png_data: bytes) -> int:
+    """
+    Check the interlace method in the PNG header.
+    The interlace byte is the 29th byte (index 28 in 0-indexed).
+    Returns the interlace method (0 = non-interlaced, 1 = interlaced).
+    """
+    if len(png_data) < 29:
+        return -1
+    return png_data[28]
 
 def process_image(image_file):
     try:
         with Image.open(image_file) as img:
-            # Convert image to RGBA for consistent PNG output if not already in RGB/RGBA.
+            # Convert image to RGBA if not already in RGB/RGBA.
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGBA")
             orig_width, orig_height = img.size
@@ -38,7 +49,11 @@ def process_image(image_file):
 
             # Resize image to fit within 720p dimensions (or smaller if already below).
             resized_img = img.resize((new_width, new_height), Image.LANCZOS)
-            b64_str = image_to_base64(resized_img)
+            b64_str, png_data = image_to_base64(resized_img)
+
+            # Debug: Check interlace method from PNG header.
+            interlace_method = check_interlace(png_data)
+            print(f"Initial interlace method for {image_file}: {interlace_method}")
 
             # If the Base64 string exceeds 1 MB, iteratively reduce the size.
             scale_factor = 0.9  # Reduce dimensions by 10% per iteration if needed
@@ -49,7 +64,9 @@ def process_image(image_file):
                 new_height = int(new_height * scale_factor)
                 print(f"Iteration {iteration}: Resizing to {new_width}x{new_height} (Base64 size: {len(b64_str)} bytes)")
                 resized_img = img.resize((new_width, new_height), Image.LANCZOS)
-                b64_str = image_to_base64(resized_img)
+                b64_str, png_data = image_to_base64(resized_img)
+                interlace_method = check_interlace(png_data)
+                print(f"Interlace method after iteration {iteration}: {interlace_method}")
 
             return b64_str, new_width, new_height
     except Exception as e:
