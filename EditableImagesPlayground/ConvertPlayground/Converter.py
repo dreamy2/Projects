@@ -5,7 +5,7 @@ import json
 from PIL import Image
 
 # Constants for file-size limits
-MAX_JSON_BYTES = 1_000_000  # Target max JSON size ~1MB
+MAX_JSON_BYTES = 999_000_000  # Target max JSON size ~1MB
 MAX_RAW_BYTES  = int(MAX_JSON_BYTES * 0.75)  # base64 adds ~33% overhead
 MAX_PIXELS     = MAX_RAW_BYTES // 4          # Each pixel = 4 bytes (RGBA)
 
