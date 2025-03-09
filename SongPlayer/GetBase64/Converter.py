@@ -18,23 +18,35 @@ def get_resized_dimensions(orig_width, orig_height, max_width=MAX_WIDTH, max_hei
 def image_to_base64(img: Image.Image, optimize=True, compress_level=9) -> (str, bytes):
     """
     Convert a Pillow Image to a Base64 encoded PNG.
-    Saves the image with interlace=0 and then forcefully sets the interlace method byte to 0.
+    Saves the image with interlace=0 and then patches the PNG data so that the interlace method is 0.
     Returns a tuple of the Base64 string and the raw PNG data.
     """
+    import io, base64
+    
     buffer = io.BytesIO()
-    # Save image as PNG with non-interlaced output
+    # Save image as PNG with interlace=0.
     img.save(buffer, format="PNG", optimize=optimize, compress_level=compress_level, interlace=0)
     png_data = buffer.getvalue()
     
-    # Convert to bytearray so we can patch the interlace method.
-    # According to the PNG spec, the interlace method is at byte index 28.
+    # Convert to a mutable bytearray.
     png_bytes = bytearray(png_data)
-    if len(png_bytes) >= 29:
-        png_bytes[28] = 0  # Force non-interlaced
-    patched_png_data = bytes(png_bytes)
     
+    # Search for the IHDR chunk marker.
+    ihdr_index = png_bytes.find(b'IHDR')
+    if ihdr_index != -1:
+        # According to the PNG spec, the interlace method byte is 12 bytes into the IHDR data.
+        # The IHDR data starts immediately after the 4-byte chunk type "IHDR",
+        # so patch the byte at index: ihdr_index + 4 + 12 = ihdr_index + 16.
+        interlace_index = ihdr_index + 16
+        if interlace_index < len(png_bytes):
+            png_bytes[interlace_index] = 0  # Force non-interlaced.
+    else:
+        print("Warning: IHDR chunk not found!")
+    
+    patched_png_data = bytes(png_bytes)
     encoded = base64.b64encode(patched_png_data).decode("utf-8")
     return encoded, patched_png_data
+
 
 def check_interlace(png_data: bytes) -> int:
     """
@@ -102,7 +114,7 @@ def main():
             continue
         
         base_name = os.path.splitext(os.path.basename(image_file))[0]
-        output_filename = os.path.join(script_dir, f"{base_name}_{final_width}x{final_height}_Base64_V2.txt")
+        output_filename = os.path.join(script_dir, f"{base_name}_{final_width}x{final_height}_Base64_V3.txt")
         with open(output_filename, "w") as f:
             f.write(b64_data)
         print(f"Exported Base64 data to {output_filename} (size: {len(b64_data)} bytes)")
