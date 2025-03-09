@@ -7,7 +7,7 @@ import io
 # Maximum dimensions for 720p (width x height)
 MAX_WIDTH = 1280
 MAX_HEIGHT = 720
-# Maximum allowed Base64 size in bytes (set to 1,000,000 bytes ~ 1 MB)
+# Maximum allowed Base64 size in bytes (approximately 1 MB)
 MAX_B64_SIZE = 1_000_000
 
 def get_resized_dimensions(orig_width, orig_height, max_width=MAX_WIDTH, max_height=MAX_HEIGHT):
@@ -16,9 +16,13 @@ def get_resized_dimensions(orig_width, orig_height, max_width=MAX_WIDTH, max_hei
     return int(orig_width * ratio), int(orig_height * ratio)
 
 def image_to_base64(img: Image.Image, optimize=True, compress_level=9) -> str:
-    """Convert a Pillow Image to a Base64 encoded PNG."""
+    """
+    Convert a Pillow Image to a Base64 encoded PNG.
+    The PNG is saved with interlace=0 (non-interlaced) so it will work with the Roblox image loader.
+    """
     buffer = io.BytesIO()
-    img.save(buffer, format="PNG", optimize=optimize, compress_level=compress_level)
+    # Force non-interlaced output by setting interlace=0.
+    img.save(buffer, format="PNG", optimize=optimize, compress_level=compress_level, interlace=0)
     png_data = buffer.getvalue()
     encoded = base64.b64encode(png_data).decode("utf-8")
     return encoded
@@ -26,20 +30,20 @@ def image_to_base64(img: Image.Image, optimize=True, compress_level=9) -> str:
 def process_image(image_file):
     try:
         with Image.open(image_file) as img:
-            # Ensure image is in RGB/RGBA format for PNG consistency.
+            # Convert image to RGBA for consistent PNG output if not already in RGB/RGBA.
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGBA")
             orig_width, orig_height = img.size
             new_width, new_height = get_resized_dimensions(orig_width, orig_height)
 
-            # Start with the 720p (or smaller) dimensions
+            # Resize image to fit within 720p dimensions (or smaller if already below).
             resized_img = img.resize((new_width, new_height), Image.LANCZOS)
             b64_str = image_to_base64(resized_img)
 
-            # If the Base64 string is too big, iteratively scale down further until under 1MB.
-            scale_factor = 0.9  # reduce dimensions by 10% each iteration if needed
+            # If the Base64 string exceeds 1 MB, iteratively reduce the size.
+            scale_factor = 0.9  # Reduce dimensions by 10% per iteration if needed
             iteration = 0
-            while len(b64_str) > MAX_B64_SIZE and (new_width > 10 and new_height > 10):
+            while len(b64_str) > MAX_B64_SIZE and new_width > 10 and new_height > 10:
                 iteration += 1
                 new_width = int(new_width * scale_factor)
                 new_height = int(new_height * scale_factor)
@@ -53,10 +57,10 @@ def process_image(image_file):
         return None, None, None
 
 def main():
-    # Get the directory where this script is located
+    # Get the directory where this script is located.
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Define image file extensions to look for
+    # Define image file extensions to look for.
     image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.PNG"]
     image_files = []
     for ext in image_extensions:
