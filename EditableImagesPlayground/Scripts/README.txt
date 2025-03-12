@@ -1,3 +1,7 @@
+installers:
+
+pip
+
 known dependencies:
 
 requests
