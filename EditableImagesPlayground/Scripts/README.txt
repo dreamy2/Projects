@@ -13,3 +13,4 @@ HARMONIC CONVERT known dependencies:
 
 librosa
 numpy
+ffmpeg (use winget)
