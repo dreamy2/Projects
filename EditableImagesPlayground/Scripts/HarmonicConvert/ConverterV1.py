@@ -9,13 +9,11 @@ def extract_harmonics(file_path, harmonic_count=5, hop_length=512):
     """
     Extract harmonic data from an audio file.
 
-    Returns a dict with keys:
-      {
-        'n': file name (string),
-        'r': user-specified wait time per harmonic (float),
-        'c': harmonic_count (int),
-        'd': frames data (dict),
-      }
+    Returns a *list* of frames (instead of a dict).
+    Each element in the list is a list of harmonics:
+        d[0] -> harmonics for frame 1
+        d[1] -> harmonics for frame 2
+        ...
     """
     # 1) Load the audio, preserving its native sample rate
     y, sr = librosa.load(file_path, sr=None)
@@ -23,22 +21,21 @@ def extract_harmonics(file_path, harmonic_count=5, hop_length=512):
     # 2) Separate harmonic component
     y_harmonic = librosa.effects.harmonic(y)
     
-    # 3) Compute STFT (Short-Time Fourier Transform)
+    # 3) Compute STFT
     S = np.abs(librosa.stft(y_harmonic, hop_length=hop_length))
     
-    # 4) Prepare the structure for per-frame data
-    frame_data = {}
+    # 4) Prepare a list for per-frame data (instead of a dict)
+    frames_list = []
     num_frames = S.shape[1]  # total frames
     num_bins = S.shape[0]    # frequency bins
     
     for i in range(num_frames):
         spectrum = S[:, i]
         
-        # Select indices of the top harmonic_count peaks in this frame
+        # Select indices of the top harmonic_count peaks
         peak_indices = np.argsort(spectrum)[-harmonic_count:][::-1]
         
         harmonics = []
-        # Avoid division by zero if the frame is silent
         max_amp = np.max(spectrum) if np.max(spectrum) != 0 else 1
         
         for idx in peak_indices:
@@ -51,13 +48,13 @@ def extract_harmonics(file_path, harmonic_count=5, hop_length=512):
             
             harmonics.append({'p': pitch_str, 'v': volume_str})
         
-        # Store the harmonics for this 1-indexed frame
-        frame_data[str(i + 1)] = harmonics
+        # Append the harmonics for this frame to the frames_list
+        frames_list.append(harmonics)
     
-    return frame_data
+    return frames_list
 
 def main():
-    # Ask the user how many harmonics to extract
+    # Ask user for harmonic count
     default_count = 5
     try:
         user_input = input(f"How many harmonics do you want to extract? (default {default_count}): ")
@@ -65,7 +62,7 @@ def main():
     except ValueError:
         harmonic_count = default_count
     
-    # Ask the user how long to wait (in seconds) for the next harmonic
+    # Ask user for how long to wait (in seconds) for the next harmonic
     default_wait = 0.05
     try:
         user_input_r = input(f"How many seconds to wait per harmonic? (default {default_wait}): ")
@@ -96,8 +93,8 @@ def main():
     for i, file_path in enumerate(files, start=1):
         print(f"\nProcessing file {i} of {total_files}: {os.path.basename(file_path)}")
         try:
-            # Extract frames/harmonics from the audio
-            frame_data = extract_harmonics(
+            # Extract the frame data as a list
+            frames_list = extract_harmonics(
                 file_path,
                 harmonic_count=harmonic_count,
                 hop_length=512
@@ -105,10 +102,11 @@ def main():
             
             # Build the final dictionary for this file
             file_dict = {
-                'n': os.path.basename(file_path),
-                'r': wait_time,           # user-specified wait time
-                'c': harmonic_count,      # user-specified harmonic count
-                'd': frame_data
+                'n': os.path.basename(file_path),  # file name
+                'r': wait_time,                   # user-specified wait time
+                'c': harmonic_count,              # user-specified harmonic count
+                # d is now a list of frames, each frame is a list of harmonics
+                'd': frames_list
             }
             output_data.append(file_dict)
             
