@@ -2,101 +2,134 @@ import os
 import json
 import numpy as np
 import librosa
+import traceback
+import sys
 
-def extract_harmonics(audio_file, harmonic_count, intensity, target_fps=30, n_fft=2048, hop_length=512):
+def extract_harmonics(file_path, harmonic_count=5):
     """
-    Extract harmonic data from an audio file.
-    
-    Parameters:
-      audio_file (str): Path to the audio file.
-      harmonic_count (int): Maximum number of harmonics to store per frame. If intensity==0, harmonic_count is ignored.
-      intensity (float): 0 to 100. 0 stores all harmonics; 100 stores only those harmonics with amplitude equal to the max.
-      target_fps (float): How many frames per second to sample.
-      n_fft (int): FFT window size.
-      hop_length (int): Hop length for STFT.
-    
-    Returns:
-      dict: Keys are frame indices (as strings) and values are lists of harmonics. Each harmonic is a dict with:
-            "p": Roblox pitch (frequency/440, rounded to 2 decimals)
-            "v": volume (amplitude, rounded to 4 decimals)
+    Extracts harmonic data from an audio file:
+      - Loads the audio file using its native sampling rate.
+      - Separates the harmonic component with librosa.effects.harmonic.
+      - Computes STFT and, for each frame, selects the top harmonic_count peaks.
+      - For each harmonic, computes a normalized pitch (frequency/440)
+        and normalized volume (0..1), both rounded to 4 decimals.
+      
+    Returns a dict:
+      {
+        'n': file name,
+        'r': sample rate,
+        'c': harmonic_count,
+        'd': {
+          frame_number (as string): [
+            {'p': "0.1234", 'v': "0.5678"},  # pitch, volume as strings
+            ...
+          ],
+          ...
+        }
+      }
     """
-    # Load audio (mono, native sample rate)
-    y, sr = librosa.load(audio_file, sr=None, mono=True)
-    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
-    total_frames = S.shape[1]
-    stft_fps = sr / hop_length
-    skip = max(int(round(stft_fps / target_fps)), 1)
-    freq_res = sr / n_fft
-
-    details = {}
-    frame_index = 0
-    for i in range(0, total_frames, skip):
-        frame_mag = S[:, i]
-        # Avoid division by zero if frame is silent
-        max_mag = np.max(frame_mag)
-        if max_mag == 0:
-            rel_values = np.zeros_like(frame_mag)
-        else:
-            rel_values = frame_mag / max_mag
-
-        if intensity > 0:
-            # Only store harmonics with relative amplitude >= (intensity/100)
-            threshold = intensity / 100.0
-            indices = [idx for idx, rel in enumerate(rel_values) if rel >= threshold]
-            # If harmonic_count is > 0, take only the top N (by magnitude) of these indices
-            if harmonic_count > 0 and len(indices) > harmonic_count:
-                indices = sorted(indices, key=lambda idx: frame_mag[idx], reverse=True)[:harmonic_count]
-        else:
-            # intensity==0: store all harmonics (ignores harmonic_count)
-            indices = range(len(frame_mag))
+    # Load the audio file (sr=None to preserve original sample rate)
+    y, sr = librosa.load(file_path, sr=None)
+    
+    # Extract harmonic component
+    y_harmonic = librosa.effects.harmonic(y)
+    
+    # Compute STFT (Short-Time Fourier Transform) of the harmonic signal
+    S = np.abs(librosa.stft(y_harmonic))
+    
+    # Prepare the structure for per-frame data
+    frame_data = {}
+    num_frames = S.shape[1]
+    num_bins = S.shape[0]
+    
+    for i in range(num_frames):
+        spectrum = S[:, i]
+        
+        # Select indices of the top harmonic_count peaks in this frame
+        peak_indices = np.argsort(spectrum)[-harmonic_count:][::-1]
         
         harmonics = []
-        for idx in indices:
-            # Convert frequency (Hz) to Roblox pitch (pitch=frequency/440)
-            pitch = round((idx * freq_res) / 440, 2)
-            volume = round(float(frame_mag[idx]), 4)
-            harmonics.append({"p": pitch, "v": volume})
-        details[str(frame_index)] = harmonics
-        frame_index += 1
-    return details
+        # Avoid division by zero if the frame is silent
+        max_amp = np.max(spectrum) if np.max(spectrum) != 0 else 1
+        
+        for idx in peak_indices:
+            # Convert the bin index to frequency (Hz)
+            freq = idx * sr / (2 * num_bins)
+            
+            # Format pitch and volume as strings with exactly 4 decimal places
+            pitch_str = f"{freq / 440.0:.4f}"
+            volume_str = f"{(spectrum[idx] / max_amp):.4f}"
+            
+            harmonics.append({'p': pitch_str, 'v': volume_str})
+        
+        # Store the harmonics for this 1-indexed frame
+        frame_data[str(i + 1)] = harmonics
+    
+    return {
+        'n': os.path.basename(file_path),
+        'r': sr,  # sample rate (int)
+        'c': harmonic_count,
+        'd': frame_data
+    }
 
 def main():
+    # Ask the user how many harmonics to extract
+    default_count = 5
     try:
-        harmonic_count = int(input("Enter the maximum number of harmonics to extract (use 0 to ignore count and store all based on intensity): "))
-    except:
-        harmonic_count = 0
-    try:
-        intensity = float(input("Enter the intensity (0 for all harmonics, 100 for only critical harmonics): "))
-    except:
-        intensity = 0.0
-    try:
-        target_fps = float(input("Enter the target FPS for harmonic frames (e.g., 30): "))
-    except:
-        target_fps = 30
-
-    # Acceptable audio file extensions
-    audio_exts = {'.wav', '.mp3', '.ogg'}
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    audio_files = [f for f in os.listdir(script_dir)
-                   if os.path.splitext(f)[1].lower() in audio_exts]
-
-    if not audio_files:
-        print("No audio files found in the script directory.")
-        return
-
-    output_data = {}
-    for file in audio_files:
-        audio_path = os.path.join(script_dir, file)
-        print(f"Processing {file} ...")
-        details = extract_harmonics(audio_path, harmonic_count, intensity, target_fps=target_fps)
-        output_data[file] = {"harmonicCount": harmonic_count, "details": details}
+        user_input = input(f"How many harmonics do you want to extract? (default {default_count}): ")
+        harmonic_count = int(user_input) if user_input.strip() else default_count
+    except ValueError:
+        harmonic_count = default_count
     
-    output_filename = os.path.join(script_dir, "harmonics.txt")
-    with open(output_filename, "w") as out:
-        # Using compact JSON separators to minimize file size.
-        json.dump(output_data, out, separators=(',', ':'), ensure_ascii=False)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    print(f"Harmonic data saved to {output_filename}")
+    # Valid audio extensions
+    valid_extensions = ('.wav', '.mp3', '.ogg', '.flac')
+    
+    # Gather audio files in the same folder as this script
+    files = [
+        os.path.join(script_dir, f)
+        for f in os.listdir(script_dir)
+        if f.lower().endswith(valid_extensions)
+    ]
+    
+    if not files:
+        print("No audio files found in the script's folder.")
+        sys.exit(0)
+    
+    output_data = []
+    total_files = len(files)
+    
+    # Process each file
+    for i, file_path in enumerate(files, start=1):
+        print(f"\nProcessing file {i} of {total_files}: {os.path.basename(file_path)}")
+        try:
+            # Extract harmonics with the user-specified harmonic_count
+            harmonic_info = extract_harmonics(file_path, harmonic_count=harmonic_count)
+            output_data.append(harmonic_info)
+            
+            # Show completion percentage
+            percent_complete = (i / total_files) * 100
+            print(f"Completed file {i} of {total_files}. ({percent_complete:.2f}% complete)")
+        
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+            traceback.print_exc()
+            # Decide if you want to stop or continue on error
+            # sys.exit(1)  # <-- uncomment if you want to stop on the first error
+    
+    # Write the JSON data to harmonics.txt in the same folder
+    output_file = os.path.join(script_dir, "harmonics.txt")
+    try:
+        with open(output_file, "w") as f:
+            json.dump(output_data, f, indent=4)
+        print(f"\nExtraction complete. Data exported to {output_file}")
+    except Exception as e:
+        print(f"Error writing to {output_file}: {e}")
+        traceback.print_exc()
+    
+    # Auto-close (exit) when done
+    sys.exit(0)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
