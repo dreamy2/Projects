@@ -5,15 +5,15 @@ import glob
 import numpy as np
 import librosa
 
-# Ask the user for frame interval and number of harmonics
+# Ask the user for frame interval (in seconds) and number of harmonics per frame
 try:
     frame_interval = float(input("Enter frame interval in seconds (e.g., 0.01): ").strip())
 except ValueError:
     frame_interval = 0.01
 try:
-    num_harmonics = int(input("Enter number of harmonics per frame (e.g., 100): ").strip())
+    num_harmonics = int(input("Enter number of harmonics per frame (e.g., 80): ").strip())
 except ValueError:
-    num_harmonics = 100
+    num_harmonics = 80
 
 # Supported audio extensions
 AUDIO_EXTENSIONS = [".mp3", ".wav", ".ogg"]
@@ -42,11 +42,10 @@ print(f"Processing {filename}...")
 
 # Load audio (mono)
 y, sr = librosa.load(filepath, sr=None, mono=True)
-duration = librosa.get_duration(y=y, sr=sr)
 
 # Determine STFT parameters
 hop_length = int(frame_interval * sr)
-n_fft = 4096  # High-resolution FFT for frequency accuracy
+n_fft = 4096  # Use a high-resolution FFT for frequency accuracy
 if hop_length < 1:
     hop_length = 1
 
@@ -57,33 +56,43 @@ freqs = fft_frequencies(sr, n_fft)
 num_frames = S.shape[1]
 
 # Prepare an array to hold all harmonic pairs (each pair: pitch, volume)
+# Shape: (num_frames, 2 * num_harmonics)
 harmonic_data = np.zeros((num_frames, 2 * num_harmonics), dtype=np.float32)
 
-# For each frame, extract the top num_harmonics peaks (by magnitude)
 for frame in range(num_frames):
-    magnitudes = S[:, frame]
-    # Ignore the DC component for peak selection
-    magnitudes_noDC = magnitudes.copy()
-    magnitudes_noDC[0] = 0
+    # Get the spectrum for this frame
+    magnitudes = S[:, frame].copy()
+    # Determine the maximum amplitude in the frame for normalization (avoid division by zero)
+    max_amp = np.max(magnitudes)
+    if max_amp == 0:
+        max_amp = 1
+
+    # Ignore the DC component (0 Hz) for peak selection
+    magnitudes[0] = 0
+
     # Get the indices of the top num_harmonics peaks
-    if magnitudes_noDC.size < num_harmonics:
-        top_indices = np.argsort(magnitudes_noDC)[-magnitudes_noDC.size:]
+    if magnitudes.size < num_harmonics:
+        top_indices = np.argsort(magnitudes)[-magnitudes.size:]
     else:
-        top_indices = np.argpartition(magnitudes_noDC, -num_harmonics)[-num_harmonics:]
-    # Sort indices by frequency (ascending)
+        top_indices = np.argpartition(magnitudes, -num_harmonics)[-num_harmonics:]
+    # Sort indices by frequency (ascending order)
     top_indices = top_indices[np.argsort(freqs[top_indices])]
+
+    # For each selected peak, calculate pitch and normalized volume
     for i, idx in enumerate(top_indices):
-        freq = freqs[idx]
-        vol = magnitudes[idx]
-        harmonic_data[frame, 2 * i] = freq
-        harmonic_data[frame, 2 * i + 1] = vol
+        # Convert frequency to playback speed multiplier (e.g., 440 Hz -> 1.0)
+        pitch = freqs[idx] / 440.0
+        # Normalize volume (0 to 1) based on the max amplitude in this frame
+        volume = magnitudes[idx] / max_amp
+        harmonic_data[frame, 2 * i] = pitch
+        harmonic_data[frame, 2 * i + 1] = volume
 
 # Pack the harmonic data as binary 32-bit floats
 binary_data = harmonic_data.tobytes()
 # Encode the binary data as a Base64 string
 b64_str = base64.b64encode(binary_data).decode('utf-8')
 
-# Create a JSON array (list) with the format:
+# Create a JSON array with the format:
 # [ "filename", frame_interval, num_harmonics, "base64_data" ]
 output_data = [filename, frame_interval, num_harmonics, b64_str]
 
