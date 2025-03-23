@@ -2,9 +2,14 @@ installers:
 
 pip
 
-known dependencies:
+SCREENSHARE known dependencies:
 
 requests
 mss
 numpy
 Pillow
+
+HARMONIC CONVERT known dependencies:
+
+librosa
+numpy
