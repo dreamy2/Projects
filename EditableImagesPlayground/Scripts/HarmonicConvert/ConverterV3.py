@@ -1,6 +1,7 @@
 import os
-import glob
+import json
 import base64
+import glob
 import numpy as np
 import librosa
 
@@ -82,14 +83,14 @@ binary_data = harmonic_data.tobytes()
 # Encode the binary data as a Base64 string
 b64_str = base64.b64encode(binary_data).decode('utf-8')
 
-# Create a Lua table string with the format:
-# data = { "filename", frame_interval, num_harmonics, "base64_data" }
-lua_table = f'data = {{ "{filename}", {frame_interval}, {num_harmonics}, "{b64_str}" }}'
+# Create a JSON array (list) with the format:
+# [ "filename", frame_interval, num_harmonics, "base64_data" ]
+output_data = [filename, frame_interval, num_harmonics, b64_str]
 
-# Save the output to a text file in the same folder as the script
+# Save the output to a JSON file in the same folder as the script
 base_name, _ = os.path.splitext(filename)
-output_path = os.path.join(script_dir, base_name + ".txt")
-with open(output_path, "w", encoding="utf-8") as txt:
-    txt.write(lua_table)
+output_path = os.path.join(script_dir, base_name + ".json")
+with open(output_path, "w", encoding="utf-8") as json_file:
+    json.dump(output_data, json_file)
 
-print(f"Saved output to {output_path}")
+print(f"Saved JSON output to {output_path}")
