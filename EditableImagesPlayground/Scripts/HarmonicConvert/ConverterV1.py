@@ -5,42 +5,31 @@ import librosa
 import traceback
 import sys
 
-def extract_harmonics(file_path, harmonic_count=5):
+def extract_harmonics(file_path, harmonic_count=5, hop_length=512):
     """
-    Extracts harmonic data from an audio file:
-      - Loads the audio file using its native sampling rate.
-      - Separates the harmonic component with librosa.effects.harmonic.
-      - Computes STFT and, for each frame, selects the top harmonic_count peaks.
-      - For each harmonic, computes a normalized pitch (frequency/440)
-        and normalized volume (0..1), both rounded to 4 decimals.
-      
-    Returns a dict:
+    Extract harmonic data from an audio file.
+
+    Returns a dict with keys:
       {
-        'n': file name,
-        'r': sample rate,
-        'c': harmonic_count,
-        'd': {
-          frame_number (as string): [
-            {'p': "0.1234", 'v': "0.5678"},  # pitch, volume as strings
-            ...
-          ],
-          ...
-        }
+        'n': file name (string),
+        'r': user-specified wait time per harmonic (float),
+        'c': harmonic_count (int),
+        'd': frames data (dict),
       }
     """
-    # Load the audio file (sr=None to preserve original sample rate)
+    # 1) Load the audio, preserving its native sample rate
     y, sr = librosa.load(file_path, sr=None)
     
-    # Extract harmonic component
+    # 2) Separate harmonic component
     y_harmonic = librosa.effects.harmonic(y)
     
-    # Compute STFT (Short-Time Fourier Transform) of the harmonic signal
-    S = np.abs(librosa.stft(y_harmonic))
+    # 3) Compute STFT (Short-Time Fourier Transform)
+    S = np.abs(librosa.stft(y_harmonic, hop_length=hop_length))
     
-    # Prepare the structure for per-frame data
+    # 4) Prepare the structure for per-frame data
     frame_data = {}
-    num_frames = S.shape[1]
-    num_bins = S.shape[0]
+    num_frames = S.shape[1]  # total frames
+    num_bins = S.shape[0]    # frequency bins
     
     for i in range(num_frames):
         spectrum = S[:, i]
@@ -56,7 +45,7 @@ def extract_harmonics(file_path, harmonic_count=5):
             # Convert the bin index to frequency (Hz)
             freq = idx * sr / (2 * num_bins)
             
-            # Format pitch and volume as strings with exactly 4 decimal places
+            # Format pitch & volume as strings with exactly 4 decimal places
             pitch_str = f"{freq / 440.0:.4f}"
             volume_str = f"{(spectrum[idx] / max_amp):.4f}"
             
@@ -65,12 +54,7 @@ def extract_harmonics(file_path, harmonic_count=5):
         # Store the harmonics for this 1-indexed frame
         frame_data[str(i + 1)] = harmonics
     
-    return {
-        'n': os.path.basename(file_path),
-        'r': sr,  # sample rate (int)
-        'c': harmonic_count,
-        'd': frame_data
-    }
+    return frame_data
 
 def main():
     # Ask the user how many harmonics to extract
@@ -80,6 +64,14 @@ def main():
         harmonic_count = int(user_input) if user_input.strip() else default_count
     except ValueError:
         harmonic_count = default_count
+    
+    # Ask the user how long to wait (in seconds) for the next harmonic
+    default_wait = 0.05
+    try:
+        user_input_r = input(f"How many seconds to wait per harmonic? (default {default_wait}): ")
+        wait_time = float(user_input_r) if user_input_r.strip() else default_wait
+    except ValueError:
+        wait_time = default_wait
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -104,9 +96,21 @@ def main():
     for i, file_path in enumerate(files, start=1):
         print(f"\nProcessing file {i} of {total_files}: {os.path.basename(file_path)}")
         try:
-            # Extract harmonics with the user-specified harmonic_count
-            harmonic_info = extract_harmonics(file_path, harmonic_count=harmonic_count)
-            output_data.append(harmonic_info)
+            # Extract frames/harmonics from the audio
+            frame_data = extract_harmonics(
+                file_path,
+                harmonic_count=harmonic_count,
+                hop_length=512
+            )
+            
+            # Build the final dictionary for this file
+            file_dict = {
+                'n': os.path.basename(file_path),
+                'r': wait_time,           # user-specified wait time
+                'c': harmonic_count,      # user-specified harmonic count
+                'd': frame_data
+            }
+            output_data.append(file_dict)
             
             # Show completion percentage
             percent_complete = (i / total_files) * 100
@@ -115,8 +119,8 @@ def main():
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
             traceback.print_exc()
-            # Decide if you want to stop or continue on error
-            # sys.exit(1)  # <-- uncomment if you want to stop on the first error
+            # If you want to stop on error, uncomment:
+            # sys.exit(1)
     
     # Write the JSON data to harmonics.txt in the same folder
     output_file = os.path.join(script_dir, "harmonics.txt")
